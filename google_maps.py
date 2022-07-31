@@ -15,15 +15,15 @@ import datetime
 import pandas as pd
 import requests, json
 
-DRIVER_EXECUTABLE_PATH = "./chromedriver.exe"
+DRIVER_EXECUTABLE_PATH = "./utils/chromedriver"
 options = Options()
-options.add_argument("--headless")
-options.add_argument("--disable-gpu")
-options.add_argument("--disable-logging")
-options.add_argument("--disable-blink-features=AutomationControlled")
-options.add_experimental_option("excludeSwitches", ["enable-automation"])
-options.add_experimental_option("useAutomationExtension", False)
-options.add_experimental_option("excludeSwitches", ["enable-logging"])
+# options.add_argument("--headless")
+# options.add_argument("--disable-gpu")
+# options.add_argument("--disable-logging")
+# options.add_argument("--disable-blink-features=AutomationControlled")
+# options.add_experimental_option("excludeSwitches", ["enable-automation"])
+# options.add_experimental_option("useAutomationExtension", False)
+# options.add_experimental_option("excludeSwitches", ["enable-logging"])
 
 
 def click(element, driver):
@@ -47,11 +47,11 @@ def map_search(query):
 
 def get_api_urls(driver):
     # scroll till the end (no new response recieved in backend)
-    time_limit = 3600
+    time_limit = 3600  # in seconds
     time_counter = 0
+
     print("Scrolling...")
     while time_counter < time_limit:
-        before_scroll_responses = driver.requests
         try:
             driver.execute_script(
                 """
@@ -61,20 +61,24 @@ def get_api_urls(driver):
             )
         except Exception as e:
             print(e)
-        time.sleep(5)
-        time_counter += 5
 
-        after_scroll_responses = driver.requests
-
-        if len(after_scroll_responses) == len(before_scroll_responses):
+        try:
+            WebDriverWait(driver, 2).until(
+                EC.presence_of_element_located(
+                    (By.XPATH, "//*[contains(text(),'reached the end of the list.')]")
+                )
+            )
             break
+        except:
+            continue
 
     # filter backend responses
     api_urls = set()
-    for backend_response in after_scroll_responses:
+    for backend_response in driver.requests:
         if "search?" in backend_response.url:
             backend_api_url = backend_response.url
             api_urls.add(backend_api_url)
+    print(len(api_urls))
     return api_urls
 
 
@@ -182,12 +186,14 @@ def extract_data(cleaned_api):
 if __name__ == "__main__":
     argument = sys.argv
 
-    query = argument[1]
-    OUTPUT_FILE = argument[2]
+    # query = argument[1]
+    # OUTPUT_FILE = argument[2]
+    query = "restaurants in florida"
+    OUTPUT_FILE = "file.csv"
 
     service = Service(DRIVER_EXECUTABLE_PATH)
     driver = webdriver.Chrome(service=service, options=options)
     map_search(query)
-    get_api_urls(driver)
+    # get_api_urls(driver)
     api_urls = get_api_urls(driver)
     parse_apis(api_urls)
