@@ -12,10 +12,16 @@ import pandas as pd
 from selenium.webdriver.chrome.service import Service
 from urllib.parse import quote
 import datetime
-import pandas as pd
+from multiprocessing import Pool
 import requests, json
 
+POOL_SIZE = 1
+OUTPUT_FILE = "google_maps.csv"
+
 DRIVER_EXECUTABLE_PATH = "./utils/chromedriver"
+service = Service(DRIVER_EXECUTABLE_PATH)
+
+# headless mode setting
 options = Options()
 # options.add_argument("--headless")
 # options.add_argument("--disable-gpu")
@@ -34,7 +40,20 @@ def click(element, driver):
         driver.execute_script("arguments[0].click();", element)
 
 
-def map_search(query):
+def clean(string):
+    if string == None:
+        return string
+    string = str(string)
+    string = string.replace("\r", "").replace("\\r", "")
+    string = string.replace("\n", "").replace("\\n", "")
+    string = string.replace("*", "")
+    string = string.replace("?", "")
+    string = string.replace("#", "")
+    string = string.encode("ascii", "ignore").decode("ascii")
+    return string
+
+
+def map_search(query, driver):
     print(f">>> Searching Google Maps for {query}...")
     query_encoded = "+".join(query.split())
 
@@ -47,8 +66,10 @@ def map_search(query):
 
 def get_api_urls(driver):
     # scroll till the end (no new response recieved in backend)
-    time_limit = 3600  # in seconds
+    time_limit = 600  # in seconds
     time_counter = 0
+
+    api_urls = set()
 
     print("Scrolling...")
     while time_counter < time_limit:
@@ -60,7 +81,7 @@ def get_api_urls(driver):
             """
             )
         except Exception as e:
-            print(e)
+            break
 
         try:
             WebDriverWait(driver, 2).until(
@@ -68,17 +89,28 @@ def get_api_urls(driver):
                     (By.XPATH, "//*[contains(text(),'reached the end of the list.')]")
                 )
             )
-            break
+            # making sure the api is caught
+            for backend_response in driver.requests:
+                if "search?" in backend_response.url:
+                    backend_api_url = backend_response.url
+                    api_urls.add(backend_api_url)
+
+            if api_urls:
+                break
+            else:
+                time_counter += 2
+                continue
+
         except:
+            time_counter += 2
             continue
 
-    # filter backend responses
-    api_urls = set()
+    # get all and necessary backend responses
     for backend_response in driver.requests:
         if "search?" in backend_response.url:
             backend_api_url = backend_response.url
             api_urls.add(backend_api_url)
-    print(len(api_urls))
+
     return api_urls
 
 
@@ -100,6 +132,7 @@ def parse_apis(api_urls):
                     "region",
                     "phone_number",
                     "price_range",
+                    "API URL",
                 )
             )
         for i, url in enumerate(api_urls):
@@ -120,12 +153,12 @@ def parse_apis(api_urls):
             cleaned_api = search_json[0][1]
 
             # extract data from cleaned api
-            extracted_data = extract_data(cleaned_api)
+            extracted_data = extract_data(cleaned_api, url)
 
             csv_writer.writerows(extracted_data)
 
 
-def extract_data(cleaned_api):
+def extract_data(cleaned_api, api_url):
     extracted_data = []
 
     for i, data in enumerate(cleaned_api):
@@ -133,30 +166,30 @@ def extract_data(cleaned_api):
         if i == 0:
             continue
         try:
-            store_name = data[14][11]
+            store_name = clean(data[14][11])
             tags_list = data[14][32]
             location_list = data[14][2]
-            location = ", ".join(location_list) if location_list else None
+            location = clean(", ".join(location_list) if location_list else None)
 
-            website = data[14][7][1] if data[14][7] else None
-            num_reviews = data[14][4][3][1] if data[14][4] else None
-            average_reviews = data[14][4][7] if data[14][4] else None
+            website = clean(data[14][7][1] if data[14][7] else None)
+            num_reviews = clean(data[14][4][3][1] if data[14][4] else None)
+            average_reviews = clean(data[14][4][7] if data[14][4] else None)
             features_list = data[14][13]
 
-            features = ", ".join(features_list) if features_list else None
+            features = clean(", ".join(features_list) if features_list else None)
 
-            region = data[14][14]
+            region = clean(data[14][14])
             tags = []
             if tags_list:
                 for tag in tags_list:
                     if tag[1]:
                         tags.append(tag[1])
 
-                tag = ", ".join(tags)
+                tag = clean(", ".join(tags))
             else:
                 tag = None
 
-            phone_number = data[14][178][0][0] if data[14][178] else None
+            phone_number = clean(data[14][178][0][0] if data[14][178] else None)
 
             try:
 
@@ -175,6 +208,7 @@ def extract_data(cleaned_api):
                     region,
                     phone_number,
                     price_range,
+                    api_url,
                 )
             )
         except Exception as e:
@@ -183,17 +217,37 @@ def extract_data(cleaned_api):
     return extracted_data
 
 
-if __name__ == "__main__":
-    argument = sys.argv
+def scrape_googlemaps(query):
 
-    # query = argument[1]
-    # OUTPUT_FILE = argument[2]
-    query = "restaurants in florida"
-    OUTPUT_FILE = "file.csv"
-
-    service = Service(DRIVER_EXECUTABLE_PATH)
     driver = webdriver.Chrome(service=service, options=options)
-    map_search(query)
-    # get_api_urls(driver)
+    map_search(query, driver)
     api_urls = get_api_urls(driver)
     parse_apis(api_urls)
+    driver.quit()
+
+
+if __name__ == "__main__":
+    # getting queries
+    queries_df = pd.read_csv("query.csv")
+    queries = list(queries_df["query"].unique())
+
+    # creating concurrent pool batches
+    scraping_batches = list()
+    for i in range(0, len(queries), POOL_SIZE):
+        scraping_batches.append(queries[i : i + POOL_SIZE])
+
+    # looping over batches of urls to add them to multiprocessing pools
+    for batch_num, batch in enumerate(scraping_batches):
+        print(
+            f"<<<<< Running Concurrent Batch {batch_num}/{len(scraping_batches)} >>>>>"
+        )
+        p = Pool(len(batch))
+        try:
+            p.map(scrape_googlemaps, batch)
+        except Exception as e:
+            print(f"ERROR: {e}")
+            p.map(scrape_googlemaps, batch)
+        p.terminate()
+        p.join()
+
+    # scrape_googlemaps("SPORTS RETAILER IN Newyork")
