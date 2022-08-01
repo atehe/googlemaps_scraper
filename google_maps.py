@@ -16,6 +16,7 @@ from multiprocessing import Pool
 import requests, json
 
 POOL_SIZE = 1
+TIME_LIMIT = 60  # maximum scroll time in seconds
 OUTPUT_FILE = "google_maps.csv"
 
 DRIVER_EXECUTABLE_PATH = "./utils/chromedriver"
@@ -61,18 +62,19 @@ def map_search(query, driver):
     search_button = WebDriverWait(driver, 15).until(
         EC.element_to_be_clickable((By.XPATH, '//button[@id="searchbox-searchbutton"]'))
     )
+    del driver.requests
     click(search_button, driver)
+    time.sleep(5)
 
 
 def get_api_urls(driver):
     # scroll till the end (no new response recieved in backend)
-    time_limit = 600  # in seconds
     time_counter = 0
 
     api_urls = set()
 
     print("Scrolling...")
-    while time_counter < time_limit:
+    while time_counter < TIME_LIMIT:
         try:
             driver.execute_script(
                 """
@@ -98,6 +100,7 @@ def get_api_urls(driver):
             if api_urls:
                 break
             else:
+                driver.refresh()
                 time_counter += 2
                 continue
 
@@ -114,7 +117,7 @@ def get_api_urls(driver):
     return api_urls
 
 
-def parse_apis(api_urls):
+def parse_apis(api_urls, search_query):
     write_headers = not os.path.exists(OUTPUT_FILE)
     with open(OUTPUT_FILE, "a") as csvfile:
 
@@ -132,6 +135,7 @@ def parse_apis(api_urls):
                     "region",
                     "phone_number",
                     "price_range",
+                    "Search Query",
                     "API URL",
                 )
             )
@@ -153,12 +157,12 @@ def parse_apis(api_urls):
             cleaned_api = search_json[0][1]
 
             # extract data from cleaned api
-            extracted_data = extract_data(cleaned_api, url)
+            extracted_data = extract_data(cleaned_api, url, search_query)
 
             csv_writer.writerows(extracted_data)
 
 
-def extract_data(cleaned_api, api_url):
+def extract_data(cleaned_api, api_url, search_query):
     extracted_data = []
 
     for i, data in enumerate(cleaned_api):
@@ -208,6 +212,7 @@ def extract_data(cleaned_api, api_url):
                     region,
                     phone_number,
                     price_range,
+                    search_query,
                     api_url,
                 )
             )
@@ -222,32 +227,37 @@ def scrape_googlemaps(query):
     driver = webdriver.Chrome(service=service, options=options)
     map_search(query, driver)
     api_urls = get_api_urls(driver)
-    parse_apis(api_urls)
+    parse_apis(api_urls, query)
     driver.quit()
 
 
 if __name__ == "__main__":
-    # getting queries
-    queries_df = pd.read_csv("query.csv")
-    queries = list(queries_df["query"].unique())
+    argument = sys.argv
 
-    # creating concurrent pool batches
-    scraping_batches = list()
-    for i in range(0, len(queries), POOL_SIZE):
-        scraping_batches.append(queries[i : i + POOL_SIZE])
+    if len(argument) > 1:
+        query = argument[1]
+        OUTPUT_FILE = argument[2]
+        scrape_googlemaps(query)
+    else:
+        # getting queries
+        queries_df = pd.read_csv("query.csv")
+        queries = list(queries_df["query"].unique())
 
-    # looping over batches of urls to add them to multiprocessing pools
-    for batch_num, batch in enumerate(scraping_batches):
-        print(
-            f"<<<<< Running Concurrent Batch {batch_num}/{len(scraping_batches)} >>>>>"
-        )
-        p = Pool(len(batch))
-        try:
-            p.map(scrape_googlemaps, batch)
-        except Exception as e:
-            print(f"ERROR: {e}")
-            p.map(scrape_googlemaps, batch)
-        p.terminate()
-        p.join()
+        # creating concurrent pool batches
+        scraping_batches = list()
+        for i in range(0, len(queries), POOL_SIZE):
+            scraping_batches.append(queries[i : i + POOL_SIZE])
 
-    # scrape_googlemaps("SPORTS RETAILER IN Newyork")
+        # looping over batches of urls to add them to multiprocessing pools
+        for batch_num, batch in enumerate(scraping_batches):
+            print(
+                f"<<<<< Running Concurrent Batch {batch_num}/{len(scraping_batches)} >>>>>"
+            )
+            p = Pool(len(batch))
+            try:
+                p.map(scrape_googlemaps, batch)
+            except Exception as e:
+                print(f"ERROR: {e}")
+                p.map(scrape_googlemaps, batch)
+            p.terminate()
+            p.join()
