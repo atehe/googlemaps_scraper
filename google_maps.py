@@ -15,7 +15,7 @@ import datetime
 from multiprocessing import Pool
 import requests, json
 
-POOL_SIZE = 1
+POOL_SIZE = 8
 TIME_LIMIT = 60  # maximum scroll time in seconds
 OUTPUT_FILE = "google_maps.csv"
 
@@ -24,13 +24,13 @@ service = Service(DRIVER_EXECUTABLE_PATH)
 
 # headless mode setting
 options = Options()
-# options.add_argument("--headless")
-# options.add_argument("--disable-gpu")
-# options.add_argument("--disable-logging")
-# options.add_argument("--disable-blink-features=AutomationControlled")
-# options.add_experimental_option("excludeSwitches", ["enable-automation"])
-# options.add_experimental_option("useAutomationExtension", False)
-# options.add_experimental_option("excludeSwitches", ["enable-logging"])
+options.add_argument("--headless")
+options.add_argument("--disable-gpu")
+options.add_argument("--disable-logging")
+options.add_argument("--disable-blink-features=AutomationControlled")
+options.add_experimental_option("excludeSwitches", ["enable-automation"])
+options.add_experimental_option("useAutomationExtension", False)
+options.add_experimental_option("excludeSwitches", ["enable-logging"])
 
 
 def click(element, driver):
@@ -228,7 +228,10 @@ def scrape_googlemaps(query):
     map_search(query, driver)
     api_urls = get_api_urls(driver)
     parse_apis(api_urls, query)
-    driver.quit()
+    try:
+        driver.quit()
+    except:
+        pass
 
 
 if __name__ == "__main__":
