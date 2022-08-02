@@ -16,7 +16,7 @@ from multiprocessing import Pool
 import requests, json
 
 POOL_SIZE = 8
-TIME_LIMIT = 60  # maximum scroll time in seconds
+TIME_LIMIT = 300  # maximum scroll time in seconds
 OUTPUT_FILE = "google_maps.csv"
 
 DRIVER_EXECUTABLE_PATH = "./utils/chromedriver"
@@ -127,6 +127,8 @@ def parse_apis(api_urls, search_query):
                 (
                     "store_name",
                     "tag",
+                    "postal_code",
+                    "country",
                     "location",
                     "website",
                     "num_reviews",
@@ -166,16 +168,25 @@ def extract_data(cleaned_api, api_url, search_query):
     extracted_data = []
 
     for i, data in enumerate(cleaned_api):
-
-        if i == 0:
-            continue
         try:
             store_name = clean(data[14][11])
             tags_list = data[14][32]
             location_list = data[14][2]
+            postal_list = location_list[-2].split()
+
+            country = location_list[-1]
+            if country and country.lower().strip() != "united kingdom":
+                postal_code = postal_list[-1]
+            elif len(postal_list) > 1:
+                postal_code = " ".join(postal_list[-2:])
+            else:
+                postal_code = None
+
             location = clean(", ".join(location_list) if location_list else None)
 
-            website = clean(data[14][7][1] if data[14][7] else None)
+            website = clean(data[14][7][0] if data[14][7] else None)
+            if website:
+                website = website.replace("/urlq=", "").strip()
             num_reviews = clean(data[14][4][3][1] if data[14][4] else None)
             average_reviews = clean(data[14][4][7] if data[14][4] else None)
             features_list = data[14][13]
@@ -204,6 +215,8 @@ def extract_data(cleaned_api, api_url, search_query):
                 (
                     store_name,
                     tag,
+                    postal_code,
+                    country,
                     location,
                     website,
                     num_reviews,
@@ -216,8 +229,7 @@ def extract_data(cleaned_api, api_url, search_query):
                     api_url,
                 )
             )
-        except Exception as e:
-            print(e)
+        except:
             continue
     return extracted_data
 
