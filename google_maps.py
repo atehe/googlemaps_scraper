@@ -15,9 +15,12 @@ import datetime
 from multiprocessing import Pool
 import requests, json
 
+
+RUN_ERROR = False
 POOL_SIZE = 8
-TIME_LIMIT = 300  # maximum scroll time in seconds
+TIME_LIMIT = 30  # maximum scroll time in seconds
 OUTPUT_FILE = "google_maps.csv"
+ERROR_FILE = "googlemaps_error.csv"
 
 DRIVER_EXECUTABLE_PATH = "./utils/chromedriver"
 service = Service(DRIVER_EXECUTABLE_PATH)
@@ -235,15 +238,17 @@ def extract_data(cleaned_api, api_url, search_query):
 
 
 def scrape_googlemaps(query):
-
-    driver = webdriver.Chrome(service=service, options=options)
-    map_search(query, driver)
-    api_urls = get_api_urls(driver)
-    parse_apis(api_urls, query)
     try:
+
+        driver = webdriver.Chrome(service=service, options=options)
+        map_search(query, driver)
+        api_urls = get_api_urls(driver)
+        parse_apis(api_urls, query)
         driver.quit()
     except:
-        pass
+        with open(ERROR_FILE, "a") as error_file:
+            error_file.write(query)
+            error_file.write("\n")
 
 
 if __name__ == "__main__":
@@ -254,9 +259,13 @@ if __name__ == "__main__":
         OUTPUT_FILE = argument[2]
         scrape_googlemaps(query)
     else:
-        # getting queries
-        queries_df = pd.read_csv("query.csv")
-        queries = list(queries_df["query"].unique())
+        if RUN_ERROR and os.path.exists(ERROR_FILE):
+            with open(ERROR_FILE, "r") as query_file:
+                queries = list(set(query_file.read().split("\n")))
+        else:
+            # getting queries
+            queries_df = pd.read_csv("query.csv")
+            queries = list(queries_df["query"].unique())
 
         # creating concurrent pool batches
         scraping_batches = list()
